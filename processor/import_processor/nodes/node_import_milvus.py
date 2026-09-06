@@ -120,16 +120,19 @@ class NodeImportMilvus(BaseNode):
 
     def _create_chunks_collection(self, collections_name, milvus_client, vector_dimension):
 
-        # 1. 创建schem
+        # 1. 创建schema
         schema = milvus_client.create_schema(auto_id=True, enable_dynamic_field=True)
         # 2. 创建列
+        # 主键字段：chunk_id（INT64自增主键，由Milvus自动生成）
         schema.add_field(field_name="chunk_id", datatype=DataType.INT64, is_primary=True, auto_id=True)
-        schema.add_field(field_name="content", datatype=DataType.VARCHAR, max_length=65535)  # 切片内容
-        schema.add_field(field_name="title", datatype=DataType.VARCHAR, max_length=100)  # 切片标题
-        schema.add_field(field_name="parent_title", datatype=DataType.VARCHAR, max_length=100)  # 父标题
+        # 切片内容：VARCHAR上限取Milvus单行文本上限
+        schema.add_field(field_name="content", datatype=DataType.VARCHAR, max_length=65535)
+        # 标题类文本字段：max_length统一取config.max_title_length（切分节点已按同一值做截断兜底，保证数据不超限）
+        schema.add_field(field_name="title", datatype=DataType.VARCHAR, max_length=self.config.max_title_length)
+        schema.add_field(field_name="parent_title", datatype=DataType.VARCHAR, max_length=self.config.max_title_length)
         schema.add_field(field_name="part", datatype=DataType.INT8)  # 分片编号
-        schema.add_field(field_name="file_title", datatype=DataType.VARCHAR, max_length=100)  # 源文件标题
-        schema.add_field(field_name="item_name", datatype=DataType.VARCHAR, max_length=100)  # 商品名称（幂等性依据）
+        schema.add_field(field_name="file_title", datatype=DataType.VARCHAR, max_length=self.config.max_title_length)
+        schema.add_field(field_name="item_name", datatype=DataType.VARCHAR, max_length=self.config.max_title_length)
         schema.add_field(field_name="sparse_vector", datatype=DataType.SPARSE_FLOAT_VECTOR)  # 稀疏向量
         schema.add_field(field_name="dense_vector", datatype=DataType.FLOAT_VECTOR, dim=vector_dimension)  # 稠密向量
 

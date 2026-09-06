@@ -31,6 +31,7 @@ def get_llm_client(model: str | None = None, json_mode: bool = False) -> ChatOpe
         base_url = os.getenv('OPENAI_API_BASE'),
         extra_body=extra_body,
         model_kwargs=model_kwargs,
+        request_timeout=600,  # 显式设置：LLM 单次调用最长等待 600s（默认值偏短，评估类超长 prompt 会超时）
     )
 
     _llm_client_cache[key] = client

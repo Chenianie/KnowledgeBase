@@ -57,6 +57,7 @@ import logging
 import math
 import os
 import sys
+import time
 import types
 import uuid
 import warnings
@@ -142,14 +143,17 @@ except Exception:  # dotenv 缺失也不阻塞主流程，各节点自带 load_d
 # ============================================================================
 from ragas import evaluate                                          # noqa: E402
 from ragas.dataset_schema import EvaluationDataset, SingleTurnSample  # noqa: E402
+from ragas.metrics import (  # noqa: E402
+    faithfulness,
+    answer_relevancy,
+    context_precision,
+    context_recall,
+    answer_correctness,
+)
+from ragas.run_config import RunConfig  # noqa: E402  ← 新增
 
 # 5 个评估指标对应的 ragas 指标实例
 # 说明：faithfulness 只用 LLM；answer_relevancy / answer_correctness 需要 LLM + Embedding
-from ragas.metrics._faithfulness import faithfulness                 # noqa: E402
-from ragas.metrics._answer_relevance import answer_relevancy         # noqa: E402
-from ragas.metrics._context_precision import context_precision       # noqa: E402
-from ragas.metrics._context_recall import context_recall             # noqa: E402
-from ragas.metrics._answer_correctness import answer_correctness     # noqa: E402
 
 # ragas 指标 → 输出 CSV 列名（与需求给定的列名保持一致）
 RAGAS_METRICS: List[Any] = [
@@ -175,6 +179,8 @@ CSV_HEADERS: List[str] = [
     "ground_truth",
 ] + OUTPUT_METRIC_COLUMNS
 
+# 单次运行内对"缺失指标"的最大补测轮数（ragas 单 job 偶发网络错误会被吞成 NaN）
+_MAX_FILL_ROUNDS = 3
 
 # 必须继承 langchain_core.embeddings.Embeddings，而不是写成"看起来兼容"的普通类：
 # ragas 的 evaluate() 仅在 isinstance(embeddings, LangchainEmbeddings) 成立时才会把对象
@@ -557,9 +563,36 @@ def step_4_assemble_eval_dataset(ctx: Dict[str, Any]) -> None:
     logger.info("可参与 ragas 评估的样本数：%d", len(samples))
 
 
+def _row_to_sample(row: Dict[str, Any]) -> SingleTurnSample:
+    """把一行流程结果转成 ragas SingleTurnSample（与 step_4 组装逻辑保持一致）。"""
+    return SingleTurnSample(
+        user_input=row["question"],
+        retrieved_contexts=row["contexts"],
+        response=row["answer"],
+        reference=row["ground_truth"],
+    )
+
+
+def _backfill_scores(rows: List[Dict[str, Any]], result: Any) -> None:
+    """
+    把一次 evaluate() 的逐样本得分回填到对应行（metric_ 前缀暂存）。
+
+    rows 必须与 result.scores 按相同顺序一一对应；
+    每个样本的得分以 metric_<输出列名> 为键写入，避免与最终输出列混淆。
+    """
+    metric_index: Dict[str, int] = {}
+    for i, metric in enumerate(RAGAS_METRICS):
+        metric_index[getattr(metric, "name", str(i))] = i
+
+    for row, row_scores in zip(rows, result.scores):
+        for metric_name, col_index in metric_index.items():
+            label = OUTPUT_METRIC_COLUMNS[col_index]
+            row["metric_" + label] = row_scores.get(metric_name)
+
+
 def step_5_run_ragas_evaluation(ctx: Dict[str, Any]) -> None:
     """
-    步骤 5：调用 ragas 批量评估 5 个指标。
+    步骤 5：调用 ragas 批量评估 5 个指标，并对偶发失败的样本自动补测。
 
     使用 ragas.evaluate()，指标依次为：
         faithfulness / answer_relevancy / context_precision /
@@ -567,11 +600,14 @@ def step_5_run_ragas_evaluation(ctx: Dict[str, Any]) -> None:
     llm 与 embeddings 直接传步骤 2 中准备的项目模型，
     ragas 内部会自动完成对指标对象的注入，无需手工绑定。
 
-    评估结果（每样本一个 dict，键为指标名）回填到对应记录，供步骤 6 写出。
+    说明：ragas 的单个 job（样本 × 指标）若遇到 LLM 网络抖动（如
+    APIConnectionError），在 raise_exceptions=False 下会被 Executor 吞成
+    NaN，导致该样本该指标在 CSV 中留空。本步骤完成首轮完整评估后检测缺失项，
+    仅对"仍有缺失的样本"按缺失指标重新评估，最多补测 _MAX_FILL_ROUNDS 轮，
+    轮间等待时间递增，尽量消化偶发的网络/服务端抖动，避免产出残缺结果。
     """
-    dataset = ctx.get("dataset")
     scored_rows = ctx.get("scored_rows", [])
-    if dataset is None or not scored_rows:
+    if ctx.get("dataset") is None or not scored_rows:
         logger.info("步骤 5/6：无可评估样本，跳过 ragas 评估。")
         ctx["raw_scores"] = []
         return
@@ -580,35 +616,69 @@ def step_5_run_ragas_evaluation(ctx: Dict[str, Any]) -> None:
     logger.info("步骤 5/6：执行 ragas 评估（共 %d 条 × %d 个指标）...",
                 len(scored_rows), len(RAGAS_METRICS))
 
-    # ragas evaluate 本身带 DeprecationWarning 及遥测提示，这里统一抑制避免刷屏
-    with warnings.catch_warnings():
-        warnings.filterwarnings("ignore", category=DeprecationWarning)
-        result = evaluate(
-            dataset=dataset,
-            metrics=RAGAS_METRICS,
-            llm=ctx["llm"],
-            embeddings=ctx["embeddings"],
-        )
+    def _evaluate(rows: List[Dict[str, Any]],
+                  metrics: List[Any]) -> Any:
+        """对 rows 对应样本执行一次 evaluate，并把得分回填到 rows。"""
+        samples = [_row_to_sample(r) for r in rows]
+        sub_dataset = EvaluationDataset(samples=samples)
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", category=DeprecationWarning)
+            result = evaluate(
+                dataset=sub_dataset,
+                metrics=metrics,
+                llm=ctx["llm"],
+                embeddings=ctx["embeddings"],
+                run_config=RunConfig(max_workers=4),  # 降低并发，避免16路同时打百炼排队导致超时
+                raise_exceptions=False,  # 失败样本不中断整体，交由下方补测逻辑兜底
+            )
+        _backfill_scores(rows, result)
+        return result
 
-    # result.scores[i] = {metric.name: 得分}，顺序与 dataset 中样本一一对应
-    raw_scores: List[Dict[str, Any]] = result.scores
-    ctx["raw_scores"] = raw_scores
+    # ---- 第 1 轮：全部样本 × 全部指标 ----
+    result = _evaluate(scored_rows, RAGAS_METRICS)
+    ctx["raw_scores"] = result.scores  # 与 scored_rows 对齐的原始得分
 
-    # 把指标得分回填到对应记录（按 OUTPUT_METRIC_COLUMNS 顺序映射指标名）
-    metric_index: Dict[str, int] = {}
-    for i, metric in enumerate(RAGAS_METRICS):
-        metric_index[getattr(metric, "name", str(i))] = i
+    # ---- 补测轮：仅重跑仍有缺失指标的样本 ----
+    for attempt in range(1, _MAX_FILL_ROUNDS + 1):
+        pending = [
+            r for r in scored_rows
+            if any(not _fmt_score(r.get("metric_" + col))
+                   for col in OUTPUT_METRIC_COLUMNS)
+        ]
+        if not pending:
+            break
+        missing_cols = sorted({
+            col for r in pending
+            for col in OUTPUT_METRIC_COLUMNS
+            if not _fmt_score(r.get("metric_" + col))
+        })
+        fill_metrics = [
+            m for m, col in zip(RAGAS_METRICS, OUTPUT_METRIC_COLUMNS)
+            if col in missing_cols
+        ]
+        wait_sec = 30 * attempt  # 给网络 / 服务端留恢复时间
+        logger.warning(
+            "检测到 %d 条样本缺失指标 %s；等待 %d 秒后执行第 %d/%d 轮补测 ...",
+            len(pending), missing_cols, wait_sec, attempt, _MAX_FILL_ROUNDS)
+        time.sleep(wait_sec)
+        _evaluate(pending, fill_metrics)
 
-    for row, row_scores in zip(scored_rows, raw_scores):
-        for metric_name, col_index in metric_index.items():
-            label = OUTPUT_METRIC_COLUMNS[col_index]
-            value = row_scores.get(metric_name)
-            row["metric_" + label] = value  # 以 metric_ 前缀暂存，避免与输出列混淆
+    # 补测结束后仍缺失的项告警（对应 CSV 单元格将留空）
+    still_missing = [
+        (r["question"][:40], col)
+        for r in scored_rows
+        for col in OUTPUT_METRIC_COLUMNS
+        if not _fmt_score(r.get("metric_" + col))
+    ]
+    if still_missing:
+        logger.warning("补测后仍有 %d 项缺失（单元格将留空）：%s",
+                       len(still_missing), still_missing)
 
     logger.info("ragas 评估完成。")
     # 打印每个样本的平均分便于观察（仅对 5 个指标的有效得分取平均）
     for i, row in enumerate(scored_rows):
-        vals = [v for col in OUTPUT_METRIC_COLUMNS for v in _collect_metric_floats([row], col)]
+        vals = [v for col in OUTPUT_METRIC_COLUMNS
+                for v in _collect_metric_floats([row], col)]
         mean = sum(vals) / len(vals) if vals else 0.0
         logger.info("  #%d 平均分=%.4f | %s", i + 1, mean, row["question"][:40])
 

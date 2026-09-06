@@ -141,6 +141,167 @@
             margin: 2px 0;
             line-height: 1.4;
         }
+
+        /* ================= 视觉增强层（仅样式增强，不改变任何结构/逻辑，删除本段即可回退原样） =================
+           与聊天页 chat.html 保持同一品牌视觉语言：蓝色渐变 #1aa7ff → #5b7cfa */
+        body {
+            font-family: 'Segoe UI', 'Microsoft YaHei', system-ui, -apple-system, Arial, sans-serif;
+            min-height: 100vh;
+            align-items: flex-start;
+            padding: 40px 20px 60px;
+            background:
+                radial-gradient(900px 480px at 15% -5%, rgba(26, 167, 255, .15), transparent 60%),
+                radial-gradient(820px 440px at 108% 6%, rgba(91, 124, 250, .15), transparent 55%),
+                radial-gradient(760px 420px at 50% 118%, rgba(26, 167, 255, .10), transparent 62%),
+                #eef2f7;
+            -webkit-font-smoothing: antialiased;
+        }
+        ::selection { background: rgba(26, 167, 255, .22); }
+
+        /* 主卡片：圆角卡片 + 顶部动态品牌流光条 */
+        .container {
+            position: relative;
+            overflow: hidden;
+            max-width: 760px;
+            padding: 34px 34px 38px;
+            border: 1px solid rgba(255, 255, 255, .7);
+            border-radius: 20px;
+            box-shadow: 0 24px 60px -16px rgba(31, 45, 61, .18), 0 2px 6px rgba(31, 45, 61, .05);
+        }
+        .container::before {
+            content: "";
+            position: absolute;
+            top: 0; left: 0; right: 0;
+            height: 4px;
+            background: linear-gradient(90deg, #1aa7ff, #5b7cfa, #1aa7ff);
+            background-size: 200% 100%;
+            animation: barSlide 5s linear infinite;
+        }
+        @keyframes barSlide { to { background-position: -200% 0; } }
+
+        h1 {
+            font-size: 22px;
+            letter-spacing: .5px;
+            margin-bottom: 26px;
+        }
+
+        /* 上传拖拽区：品牌色虚线框 + 渐变底色 + 悬浮上浮 */
+        .upload-area {
+            border: 2px dashed rgba(26, 167, 255, .45);
+            border-radius: 16px;
+            padding: 42px 24px 38px;
+            background: linear-gradient(180deg, rgba(26, 167, 255, .05), rgba(91, 124, 250, .04));
+            transition: all .25s ease;
+        }
+        .upload-area:hover {
+            background: linear-gradient(180deg, rgba(26, 167, 255, .10), rgba(91, 124, 250, .08));
+            border-color: #1aa7ff;
+            transform: translateY(-2px);
+            box-shadow: 0 20px 40px -20px rgba(26, 167, 255, .40);
+        }
+        /* 上传图标：圆形柔光底座 + 缓慢漂浮（JS 拖拽时设置的内联底色仍兼容） */
+        .upload-icon {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 84px;
+            height: 84px;
+            margin: 0 auto 14px;
+            font-size: 40px;
+            line-height: 1;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #e8f3ff, #e4ecff);
+            box-shadow: inset 0 0 0 1px rgba(26, 167, 255, .18), 0 12px 26px -12px rgba(26, 167, 255, .55);
+            animation: floatY 3.2s ease-in-out infinite;
+        }
+        @keyframes floatY {
+            0%, 100% { transform: translateY(0); }
+            50% { transform: translateY(-6px); }
+        }
+        .upload-area p { color: #5b6472; font-size: 15px; margin: 6px 0 0; }
+
+        /* 文件列表卡片：入场动画 + 悬停品牌描边 */
+        .file-list { margin-top: 26px; }
+        .file-item {
+            border: 1px solid #e8ecf3;
+            border-radius: 14px;
+            padding: 16px;
+            background: #fff;
+            box-shadow: 0 2px 6px rgba(31, 45, 61, .04);
+            transition: border-color .2s ease, box-shadow .2s ease, transform .2s ease;
+            animation: fileIn .32s ease both;
+        }
+        .file-item:hover {
+            border-color: rgba(26, 167, 255, .45);
+            box-shadow: 0 12px 28px -14px rgba(26, 167, 255, .35);
+            transform: translateY(-1px);
+        }
+        @keyframes fileIn {
+            from { opacity: 0; transform: translateY(8px); }
+            to { opacity: 1; transform: none; }
+        }
+        .file-name { color: #1f2d3d; word-break: break-all; }
+        .file-size { color: #98a4b3; }
+
+        /* 状态徽章：胶囊形柔和渐变，带状态圆点 */
+        .status-badge {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+            min-width: 88px;
+            padding: 6px 12px;
+            border-radius: 999px;
+            font-weight: 600;
+            letter-spacing: .3px;
+            box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .28);
+        }
+        .status-badge::before {
+            content: "";
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: rgba(255, 255, 255, .92);
+        }
+        .status-uploading { background: linear-gradient(135deg, #ffb84d, #f39c12); }
+        .status-processing { background: linear-gradient(135deg, #3ab4ff, #2f8ff5); }
+        .status-processing::before { animation: statusPulse 1.1s ease-in-out infinite; }
+        .status-completed { background: linear-gradient(135deg, #34d67a, #27ae60); }
+        .status-error { background: linear-gradient(135deg, #f06a5f, #e74c3c); }
+        @keyframes statusPulse { 50% { opacity: .35; } }
+
+        /* 进度条：圆角加深，更精致 */
+        .progress-bar-container {
+            height: 6px;
+            border-radius: 99px;
+            background: #edf1f6;
+        }
+        .progress-bar { border-radius: 99px; }
+
+        /* 日志面板：内嵌浅色卡片 */
+        .log-details {
+            border: 1px dashed #dfe5ee;
+            border-radius: 10px;
+            padding: 7px 11px;
+            background: #fafbfd;
+        }
+        .log-details summary { color: #4d5c70; font-weight: 600; }
+        .log-list li { color: #6b7a8f; }
+        .log-list li::marker { color: #b6c2d2; }
+
+        /* 通用按钮：品牌渐变（当前页面静态未使用，为将来扩展预留统一风格） */
+        .btn {
+            background: linear-gradient(135deg, #1aa7ff, #5b7cfa);
+            border-radius: 10px;
+            font-weight: 600;
+            box-shadow: 0 8px 18px -6px rgba(26, 167, 255, .55);
+            transition: all .2s ease;
+        }
+        .btn:hover:not(:disabled) {
+            transform: translateY(-1px);
+            box-shadow: 0 12px 24px -6px rgba(26, 167, 255, .65);
+            filter: brightness(1.05);
+        }
     </style>
 </head>
 <body>

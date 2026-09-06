@@ -20,9 +20,10 @@ class ImportConfig:
     """导入流程配置"""
 
     # ==================== 文档处理配置 ====================
-    max_content_length: int = 500 # 切片最大长度
+    max_content_length: int = 1500 # 切片最大长度
     img_content_length: int = 200  # 图片上下文最大长度
-    min_content_length: int = 100  # 合并短内容的最小长度
+    min_content_length: int = 500  # 合并短内容的最小长度
+    max_title_length: int = 100  # 标题/父标题/文件标题最大字符长度（与Milvus集合VARCHAR字段max_length保持一致，切分节点按此截断兜底）
     overlap_sentences: int = 1  # 句子级切分时重叠句数
     item_name_chunk_k: int = 3  # 商品名识别时使用的切片数量
     item_name_chunk_size: int = 2500  # 商品名识别时使用的切片内容长度

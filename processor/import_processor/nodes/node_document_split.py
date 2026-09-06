@@ -215,14 +215,32 @@ class NodeDocumentSplit(BaseNode):
         final_sections = self._merge_short_sections(refined_split)
         self.logger.info(f"步骤4-2：过短章节合并完成，最终得到{len(final_sections)}个Chunk")
 
-        # 阶段3：父标题兜底 → 适配Milvus向量库schema（parent_title为必填字段）
+        # 阶段3：父标题兜底 + 文本字段长度截断（适配Milvus向量库schema）
         # 兜底规则：无parent_title则用自身title，title也无则填空字符串
+        # 截断规则：MD原标题无长度上限，而Milvus中title/parent_title/file_title均为VARCHAR(max_length)字段，
+        #           超长数据会直接导致入库失败，故在最终输出前统一截断兜底
         for sec in final_sections:
             if not sec.get("parent_title"):
                 sec["parent_title"] = sec.get("title") or ""
+            sec["title"] = self._truncate_text_field(sec.get("title"))
+            sec["parent_title"] = self._truncate_text_field(sec.get("parent_title"))
+            sec["file_title"] = self._truncate_text_field(sec.get("file_title"))
         self.logger.debug(f"步骤4-3：父标题兜底完成，所有Chunk均包含parent_title字段")
 
         return final_sections
+
+    def _truncate_text_field(self, value) -> str:
+        """
+        【辅助函数】文本字段长度截断（防止超长标题导致Milvus入库失败）
+        功能：将title/parent_title/file_title等VARCHAR字段统一截断到max_title_length以内
+        参数：
+            value: 原始文本值（可能为None/空字符串）
+        返回：
+            str: 截断后的安全字符串，长度保证不超过max_title_length
+        """
+        text = str(value or "")
+        max_len = self.config.max_title_length
+        return text if len(text) <= max_len else text[:max_len]
 
     def _split_long_section(self, section: Dict[str, str]) -> List[Dict[str, str]]:
         """
@@ -240,6 +258,13 @@ class NodeDocumentSplit(BaseNode):
 
         # 提取章节标题，用于组装子Chunk前缀（保留标题上下文）
         title = section.get("title")
+
+        # 标题长度控制：先截断父标题（预留"-序号"后缀4字符空间），
+        # 避免后续拼接 f"{title}-{idx}" 后超出Milvus VARCHAR字段上限，
+        # 且保证统一截断时不会把末尾序号切掉导致同父子块title重复
+        if title and len(title) > self.config.max_title_length - 4:
+            title = title[:self.config.max_title_length - 4]
+
         availiable_len = self.config.max_content_length - len(title)
         if availiable_len<=0:
             self.logger.warning(f"章节标题超限，无法继续切分：{title}")
