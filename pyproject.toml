@@ -1,0 +1,42 @@
+[project]
+name = "knowledgebase"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "colorlog>=6.12.0",
+    "fastapi>=0.140.13",
+    "flagembedding>=1.4.0",
+    "grandalf>=0.8",
+    "langchain>=1.3.14",
+    "langchain-openai>=1.4.1",
+    "langchain-text-splitters>=1.1.2",
+    "langgraph>=1.2.10",
+    "minio>=7.2.20",
+    "modelscope>=1.39.1",
+    "numpy>=2.4.6",
+    "mcp>=1.19.0,<2",
+    "openai-agents>=0.20.0",
+    "pymilvus[model]>=3.0.1",
+    "pymongo>=4.17.0",
+    "python-dotenv>=1.2.2",
+    "torch>=2.13.0",
+    "torchaudio>=2.11.0",
+    "torchvision>=0.28.0",
+    "transformers>=5.14.1",
+    "dashscope>=1.26.7",
+    "ragas>=0.4.3",
+    "langchain-google-vertexai>=3.2.4",
+]
+
+[tool.uv.sources]
+# 强制从 NVIDIA 源安装
+torch = { index = "pytorch-cuda" }
+torchvision = { index = "pytorch-cuda" }
+torchaudio = { index = "pytorch-cuda" }
+
+[[tool.uv.index]]
+name = "pytorch-cuda"
+url = "https://download.pytorch.org/whl/cu126"
+explicit = true
